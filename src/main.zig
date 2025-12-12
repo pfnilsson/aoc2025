@@ -12,6 +12,7 @@ const day08 = @import("days/day08.zig");
 const day09 = @import("days/day09.zig");
 const day10 = @import("days/day10.zig");
 const day11 = @import("days/day11.zig");
+const day12 = @import("days/day12.zig");
 
 pub fn main() !void {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
@@ -44,6 +45,7 @@ fn runDay(allocator: std.mem.Allocator, day: u8) !void {
         9 => day09.solve(allocator),
         10 => day10.solve(allocator),
         11 => day11.solve(allocator),
+        12 => day12.solve(allocator),
         else => error.UnknownDay,
     };
 }

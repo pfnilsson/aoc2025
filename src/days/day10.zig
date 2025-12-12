@@ -3,7 +3,6 @@ const helpers = @import("helpers");
 
 const Machine = struct {
     const Mask = u16;
-    const INF: i64 = std.math.maxInt(i64);
 
     lights: []bool,
     buttons: [][]u8,
@@ -46,305 +45,6 @@ const Machine = struct {
         return best;
     }
 
-    fn solveJoltage(self: Machine, allocator: std.mem.Allocator) !u64 {
-        const rows = self.joltage.len;
-        const cols = self.buttons.len;
-
-        var A = try allocator.alloc([]i64, rows);
-        defer {
-            for (A) |row_slice| {
-                allocator.free(row_slice);
-            }
-            allocator.free(A);
-        }
-
-        var b = try allocator.alloc(i64, rows);
-        defer allocator.free(b);
-
-        var c = try allocator.alloc(i64, cols);
-        defer allocator.free(c);
-
-        var r: usize = 0;
-        while (r < rows) : (r += 1) {
-            A[r] = try allocator.alloc(i64, cols);
-            var j: usize = 0;
-            while (j < cols) : (j += 1) {
-                A[r][j] = 0;
-            }
-            b[r] = @intCast(self.joltage[r]);
-        }
-
-        var j: usize = 0;
-        while (j < cols) : (j += 1) {
-            const affected = self.buttons[j];
-            if (affected.len == 0) {
-                c[j] = 0;
-            } else {
-                var min_rhs: i64 = std.math.maxInt(i64);
-                for (affected) |idx_u8| {
-                    const ci: usize = @intCast(idx_u8);
-                    A[ci][j] = 1;
-                    const rhs_val: i64 = @intCast(self.joltage[ci]);
-                    if (rhs_val < min_rhs) {
-                        min_rhs = rhs_val;
-                    }
-                }
-                c[j] = min_rhs;
-            }
-        }
-
-        const row_count: usize = rows;
-        const rank = Machine.reduceToDiagnoalWithFreeCols(A, b, c, row_count, cols);
-
-        r = 0;
-        while (r < rows) : (r += 1) {
-            var any_nonzero = false;
-            var k: usize = 0;
-            while (k < cols) : (k += 1) {
-                if (A[r][k] != 0) {
-                    any_nonzero = true;
-                    break;
-                }
-            }
-            if (!any_nonzero and b[r] != 0) {
-                return error.NoSolution;
-            }
-        }
-
-        const best = Machine.minPressesForSystem(A, b, c, rank, cols);
-        return @intCast(best);
-    }
-
-    fn swapRow(A: [][]i64, b: []i64, i: usize, j: usize) void {
-        if (i == j) {
-            return;
-        }
-        const tmp_row = A[i];
-        A[i] = A[j];
-        A[j] = tmp_row;
-
-        const tmp_b = b[i];
-        b[i] = b[j];
-        b[j] = tmp_b;
-    }
-
-    fn swapCol(A: [][]i64, c: []i64, i: usize, j: usize) void {
-        if (i == j) {
-            return;
-        }
-        const rows = A.len;
-
-        var r: usize = 0;
-        while (r < rows) : (r += 1) {
-            const tmp = A[r][i];
-            A[r][i] = A[r][j];
-            A[r][j] = tmp;
-        }
-
-        const tmp_c = c[i];
-        c[i] = c[j];
-        c[j] = tmp_c;
-    }
-
-    fn reduceRow(A: [][]i64, b: []i64, pivot: usize, row: usize, cols: usize) void {
-        const pivot_val = A[pivot][pivot];
-        if (pivot_val == 0) {
-            return;
-        }
-
-        const x: i64 = pivot_val;
-        const y: i64 = -A[row][pivot];
-
-        if (y == 0) {
-            return;
-        }
-
-        const d: i64 = @intCast(std.math.gcd(@abs(x), @abs(y)));
-
-        var k: usize = 0;
-        while (k < cols) : (k += 1) {
-            const num = y * A[pivot][k] + x * A[row][k];
-            A[row][k] = @divTrunc(num, d);
-        }
-        const num_b = y * b[pivot] + x * b[row];
-        b[row] = @divTrunc(num_b, d);
-    }
-
-    fn reduceToDiagnoalWithFreeCols(
-        A: [][]i64,
-        b: []i64,
-        c: []i64,
-        rows: usize,
-        cols: usize,
-    ) usize {
-        var rank: usize = 0;
-        var i: usize = 0;
-        var col_idx: usize = 0;
-
-        while (i < rows and col_idx < cols) : (col_idx += 1) {
-            var found_col: ?usize = null;
-            var k = col_idx;
-            while (k < cols) : (k += 1) {
-                var has_nonzero = false;
-                var r: usize = i;
-                while (r < rows) : (r += 1) {
-                    if (A[r][k] != 0) {
-                        has_nonzero = true;
-                        break;
-                    }
-                }
-                if (has_nonzero) {
-                    found_col = k;
-                    break;
-                }
-            }
-            if (found_col == null) {
-                break;
-            }
-
-            const pivot_col = found_col.?;
-            Machine.swapCol(A, c, col_idx, pivot_col);
-
-            var pivot_row = i;
-            var r2: usize = i;
-            while (r2 < rows) : (r2 += 1) {
-                if (A[r2][col_idx] != 0) {
-                    pivot_row = r2;
-                    break;
-                }
-            }
-
-            Machine.swapRow(A, b, i, pivot_row);
-
-            if (A[i][col_idx] < 0) {
-                var k2: usize = 0;
-                while (k2 < cols) : (k2 += 1) {
-                    A[i][k2] = -A[i][k2];
-                }
-                b[i] = -b[i];
-            }
-
-            var r3: usize = i + 1;
-            while (r3 < rows) : (r3 += 1) {
-                Machine.reduceRow(A, b, i, r3, cols);
-            }
-
-            i += 1;
-            rank += 1;
-        }
-
-        if (rank > 0) {
-            var ir: isize = @intCast(rank);
-            while (ir > 0) : (ir -= 1) {
-                const rr: usize = @intCast(ir - 1);
-                var jr: usize = 0;
-                while (jr < rr) : (jr += 1) {
-                    Machine.reduceRow(A, b, rr, jr, cols);
-                }
-            }
-        }
-
-        return rank;
-    }
-
-    fn evaluateParamChoice(
-        A: [][]i64,
-        b: []i64,
-        rows: usize,
-        cols: usize,
-        params: []const i64,
-        param_sum: i64,
-    ) i64 {
-        const k = params.len;
-        const base = cols - k;
-
-        var sol: i64 = param_sum;
-
-        var i: usize = 0;
-        while (i < rows) : (i += 1) {
-            var cc: i64 = 0;
-            var j: usize = 0;
-            while (j < k) : (j += 1) {
-                cc += params[j] * A[i][base + j];
-            }
-
-            const s = b[i] - cc;
-            const diag = A[i][i];
-            if (diag == 0) {
-                return INF;
-            }
-
-            if (@rem(s, diag) != 0) {
-                return INF;
-            }
-
-            const a = @divTrunc(s, diag);
-            if (a < 0) {
-                return INF;
-            }
-
-            sol += a;
-        }
-
-        return sol;
-    }
-
-    fn dfsParams(
-        A: [][]i64,
-        b: []i64,
-        c: []i64,
-        rows: usize,
-        cols: usize,
-        k: usize,
-        params: *[16]i64,
-        idx: usize,
-        partial_sum: i64,
-        best: *i64,
-    ) void {
-        if (idx == k) {
-            const total = Machine.evaluateParamChoice(A, b, rows, cols, params[0..k], partial_sum);
-            if (total < best.*) {
-                best.* = total;
-            }
-            return;
-        }
-
-        const base = cols - k;
-        const col = base + idx;
-        const ub = c[col];
-
-        var v: i64 = 0;
-        while (v <= ub) : (v += 1) {
-            const new_sum = partial_sum + v;
-            if (new_sum >= best.*) {
-                break;
-            }
-
-            params.*[idx] = v;
-            Machine.dfsParams(A, b, c, rows, cols, k, params, idx + 1, new_sum, best);
-        }
-    }
-
-    fn minPressesForSystem(
-        A: [][]i64,
-        b: []i64,
-        c: []i64,
-        rows: usize,
-        cols: usize,
-    ) i64 {
-        const k = cols - rows;
-
-        if (k == 0) {
-            return Machine.evaluateParamChoice(A, b, rows, cols, &[_]i64{}, 0);
-        }
-
-        var params = [_]i64{0} ** 16;
-        var best: i64 = INF;
-
-        Machine.dfsParams(A, b, c, rows, cols, k, &params, 0, 0, &best);
-        return best;
-    }
-
     fn buildTargetMask(self: *const Machine) Mask {
         var mask: Mask = 0;
         for (self.lights, 0..) |on, i| {
@@ -372,6 +72,330 @@ const Machine = struct {
 
     fn isButtonPressed(combo: Mask, btn_idx: usize) bool {
         return ((combo >> @intCast(btn_idx)) & 1) != 0;
+    }
+
+    fn solveJoltage(self: Machine, allocator: std.mem.Allocator) !u64 {
+        const rowCount = self.joltage.len;
+        const colCount = self.buttons.len;
+
+        var system = try LinearSystem.init(allocator, rowCount, colCount);
+        defer system.deinit();
+
+        for (0..rowCount) |row| {
+            system.setTarget(row, @intCast(self.joltage[row]));
+        }
+
+        for (self.buttons, 0..) |affectedLights, col| {
+            var minJoltage: i64 = std.math.maxInt(i64);
+            for (affectedLights) |lightIdx| {
+                system.setCoefficient(lightIdx, col, 1);
+                minJoltage = @min(minJoltage, self.joltage[lightIdx]);
+            }
+
+            if (affectedLights.len > 0) {
+                system.setBound(col, minJoltage);
+            }
+        }
+
+        system.reduce();
+
+        const result = system.findMinNonNegativeSum() orelse return error.NoSolution;
+        return @intCast(result);
+    }
+};
+
+const LinearSystem = struct {
+    const INF: i64 = std.math.maxInt(i64);
+
+    matrix: [][]i64,
+    rhs: []i64,
+    bounds: []i64,
+    rowCount: usize,
+    colCount: usize,
+    rank: usize,
+    allocator: std.mem.Allocator,
+
+    fn init(allocator: std.mem.Allocator, rows: usize, cols: usize) !LinearSystem {
+        const matrix = try allocator.alloc([]i64, rows);
+        errdefer allocator.free(matrix);
+
+        var initializedRows: usize = 0;
+        errdefer {
+            for (matrix[0..initializedRows]) |row| {
+                allocator.free(row);
+            }
+        }
+
+        for (matrix) |*row| {
+            row.* = try allocator.alloc(i64, cols);
+            initializedRows += 1;
+            @memset(row.*, 0);
+        }
+
+        const rhs = try allocator.alloc(i64, rows);
+        errdefer {
+            for (matrix) |row| {
+                allocator.free(row);
+            }
+            allocator.free(matrix);
+        }
+        @memset(rhs, 0);
+
+        const bounds = try allocator.alloc(i64, cols);
+        errdefer {
+            for (matrix) |row| {
+                allocator.free(row);
+            }
+            allocator.free(matrix);
+            allocator.free(rhs);
+        }
+        @memset(bounds, 0);
+
+        return LinearSystem{
+            .matrix = matrix,
+            .rhs = rhs,
+            .bounds = bounds,
+            .rowCount = rows,
+            .colCount = cols,
+            .rank = 0,
+            .allocator = allocator,
+        };
+    }
+
+    fn deinit(self: *LinearSystem) void {
+        for (self.matrix) |row| {
+            self.allocator.free(row);
+        }
+        self.allocator.free(self.matrix);
+        self.allocator.free(self.rhs);
+        self.allocator.free(self.bounds);
+    }
+
+    fn setCoefficient(self: *LinearSystem, row: usize, col: usize, value: i64) void {
+        self.matrix[row][col] = value;
+    }
+
+    fn setTarget(self: *LinearSystem, row: usize, value: i64) void {
+        self.rhs[row] = value;
+    }
+
+    fn setBound(self: *LinearSystem, col: usize, value: i64) void {
+        self.bounds[col] = value;
+    }
+
+    fn reduce(self: *LinearSystem) void {
+        self.rank = 0;
+        var currentRow: usize = 0;
+        var currentCol: usize = 0;
+
+        while (currentRow < self.rowCount and currentCol < self.colCount) {
+            const maybePivotCol = self.findPivotInSubmatrix(currentRow, currentCol);
+            if (maybePivotCol == null) {
+                break;
+            }
+
+            const pivotCol = maybePivotCol.?;
+
+            self.swapCols(currentCol, pivotCol);
+
+            const pivotRow = self.findPivotRow(currentRow, currentCol);
+            self.swapRows(currentRow, pivotRow);
+
+            if (self.matrix[currentRow][currentCol] < 0) {
+                self.negateRow(currentRow);
+            }
+
+            self.eliminateBelow(currentRow, currentCol);
+
+            currentRow += 1;
+            currentCol += 1;
+            self.rank += 1;
+        }
+
+        self.backEliminate();
+    }
+
+    fn findMinNonNegativeSum(self: *const LinearSystem) ?i64 {
+        const freeVarCount = self.colCount - self.rank;
+
+        if (freeVarCount == 0) {
+            return self.evaluateWithFreeVars(&[_]i64{});
+        }
+
+        var freeVars = [_]i64{0} ** 16;
+        var best: i64 = INF;
+
+        self.searchFreeVarSpace(freeVarCount, &freeVars, 0, 0, &best);
+
+        return if (best == INF) null else best;
+    }
+
+    fn swapRows(self: *LinearSystem, rowA: usize, rowB: usize) void {
+        if (rowA == rowB) {
+            return;
+        }
+
+        const tempRow = self.matrix[rowA];
+        self.matrix[rowA] = self.matrix[rowB];
+        self.matrix[rowB] = tempRow;
+
+        const tempRhs = self.rhs[rowA];
+        self.rhs[rowA] = self.rhs[rowB];
+        self.rhs[rowB] = tempRhs;
+    }
+
+    fn swapCols(self: *LinearSystem, colA: usize, colB: usize) void {
+        if (colA == colB) {
+            return;
+        }
+
+        for (self.matrix) |row| {
+            const temp = row[colA];
+            row[colA] = row[colB];
+            row[colB] = temp;
+        }
+
+        const tempBound = self.bounds[colA];
+        self.bounds[colA] = self.bounds[colB];
+        self.bounds[colB] = tempBound;
+    }
+
+    fn negateRow(self: *LinearSystem, row: usize) void {
+        for (0..self.colCount) |col| {
+            self.matrix[row][col] = -self.matrix[row][col];
+        }
+        self.rhs[row] = -self.rhs[row];
+    }
+
+    fn eliminateRow(self: *LinearSystem, pivotRow: usize, targetRow: usize, pivotCol: usize) void {
+        const pivotVal = self.matrix[pivotRow][pivotCol];
+        if (pivotVal == 0) {
+            return;
+        }
+
+        const targetVal = self.matrix[targetRow][pivotCol];
+        if (targetVal == 0) {
+            return;
+        }
+
+        const gcd: i64 = @intCast(std.math.gcd(@abs(pivotVal), @abs(targetVal)));
+        const scaleTarget = pivotVal;
+        const scalePivot = -targetVal;
+
+        for (0..self.colCount) |col| {
+            const combined = scalePivot * self.matrix[pivotRow][col] + scaleTarget * self.matrix[targetRow][col];
+            self.matrix[targetRow][col] = @divTrunc(combined, gcd);
+        }
+
+        const combinedRhs = scalePivot * self.rhs[pivotRow] + scaleTarget * self.rhs[targetRow];
+        self.rhs[targetRow] = @divTrunc(combinedRhs, gcd);
+    }
+
+    fn eliminateBelow(self: *LinearSystem, pivotRow: usize, pivotCol: usize) void {
+        for (pivotRow + 1..self.rowCount) |targetRow| {
+            self.eliminateRow(pivotRow, targetRow, pivotCol);
+        }
+    }
+
+    fn backEliminate(self: *LinearSystem) void {
+        if (self.rank == 0) {
+            return;
+        }
+
+        var pivotRow = self.rank;
+        while (pivotRow > 0) {
+            pivotRow -= 1;
+            for (0..pivotRow) |targetRow| {
+                self.eliminateRow(pivotRow, targetRow, pivotRow);
+            }
+        }
+    }
+
+    fn findPivotInSubmatrix(self: *const LinearSystem, startRow: usize, startCol: usize) ?usize {
+        for (startCol..self.colCount) |col| {
+            for (startRow..self.rowCount) |row| {
+                if (self.matrix[row][col] != 0) {
+                    return col;
+                }
+            }
+        }
+        return null;
+    }
+
+    fn findPivotRow(self: *const LinearSystem, startRow: usize, col: usize) usize {
+        for (startRow..self.rowCount) |row| {
+            if (self.matrix[row][col] != 0) {
+                return row;
+            }
+        }
+        return startRow;
+    }
+
+    fn evaluateWithFreeVars(self: *const LinearSystem, freeVars: []const i64) ?i64 {
+        const freeVarCount = freeVars.len;
+        const freeVarStart = self.colCount - freeVarCount;
+
+        var total: i64 = 0;
+        for (freeVars) |val| {
+            total += val;
+        }
+
+        for (0..self.rank) |row| {
+            var freeVarContribution: i64 = 0;
+            for (freeVars, 0..) |freeVal, freeIdx| {
+                freeVarContribution += freeVal * self.matrix[row][freeVarStart + freeIdx];
+            }
+
+            const numerator = self.rhs[row] - freeVarContribution;
+            const diagonal = self.matrix[row][row];
+
+            if (diagonal == 0) {
+                return null;
+            }
+            if (@rem(numerator, diagonal) != 0) {
+                return null;
+            }
+
+            const solution = @divTrunc(numerator, diagonal);
+            if (solution < 0) {
+                return null;
+            }
+
+            total += solution;
+        }
+
+        return total;
+    }
+
+    fn searchFreeVarSpace(
+        self: *const LinearSystem,
+        freeVarCount: usize,
+        freeVars: *[16]i64,
+        currentIdx: usize,
+        partialSum: i64,
+        best: *i64,
+    ) void {
+        if (currentIdx == freeVarCount) {
+            if (self.evaluateWithFreeVars(freeVars[0..freeVarCount])) |total| {
+                if (total < best.*) {
+                    best.* = total;
+                }
+            }
+            return;
+        }
+
+        const freeVarStart = self.colCount - freeVarCount;
+        const boundCol = freeVarStart + currentIdx;
+        const upperBound = self.bounds[boundCol];
+
+        var value: i64 = 0;
+        while (value <= upperBound) : (value += 1) {
+            const newSum = partialSum + value;
+            if (newSum >= best.*) break;
+
+            freeVars[currentIdx] = value;
+            self.searchFreeVarSpace(freeVarCount, freeVars, currentIdx + 1, newSum, best);
+        }
     }
 };
 
